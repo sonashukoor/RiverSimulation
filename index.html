@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Three.js - Flowing River with Reflection</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./build/three.module.js",
+                "three/addons/": "./jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Water } from './modules/Water2.js';
+
+        let scene, camera, renderer, water, controls, cubeRenderTarget, cubeCamera;
+        const params = {
+            flowSpeed: 1.0,
+            waterColor: '#4d6fea',
+            reflectionStrength: 0.5
+        };
+
+        init();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x88ccff);  // Sky color
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 15, 30);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // Add lighting
+            const light = new THREE.DirectionalLight(0xffffff, 1.2);
+            light.position.set(10, 20, 10);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+
+            // Create terrain
+            const terraintextureLoader = new THREE.TextureLoader();
+            const grassTexture = terraintextureLoader.load('textures/terrain.jpg');
+            grassTexture.wrapS = THREE.RepeatWrapping;
+            grassTexture.wrapT = THREE.RepeatWrapping;
+            grassTexture.repeat.set(5, 5); // Adjust the tiling if needed
+
+            const terrainGeometry = new THREE.PlaneGeometry(30, 30, 100, 100);
+            terrainGeometry.rotateX(-Math.PI / 2);
+            const terrainMaterial = new THREE.MeshStandardMaterial({ map: grassTexture });
+
+            const vertices = terrainGeometry.attributes.position.array;
+            for (let i = 0; i < vertices.length; i += 3) {
+                const x = vertices[i];
+                vertices[i + 1] = Math.abs(x) > 6 ? Math.random() * 2 + 1 : -0.5;
+            }
+            terrainGeometry.computeVertexNormals();
+
+            const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+            scene.add(terrain);
+
+            // Add rocks with textures
+            addTexturedRocks();
+
+            // Set up cube camera for reflections
+            cubeRenderTarget = new THREE.WebGLCubeRenderTarget(512, {
+                format: THREE.RGBFormat,
+                generateMipmaps: true,
+                minFilter: THREE.LinearMipmapLinearFilter
+            });
+            cubeCamera = new THREE.CubeCamera(0.1, 100, cubeRenderTarget);
+            cubeCamera.position.set(0, 0.5, 0);
+            scene.add(cubeCamera);
+
+            // Load textures
+            const textureLoader = new THREE.TextureLoader();
+            const flowMap = textureLoader.load('textures/water/Water_1_M_Flow.jpg');
+            const normalMap = textureLoader.load('textures/water/Water_1_M_Normal.jpg');
+
+            // Create water
+            const waterGeometry = new THREE.PlaneGeometry(12, 30);
+            water = new Water(waterGeometry, {
+                color: params.waterColor,
+                scale: 2,
+                flowDirection: new THREE.Vector2(0, 1),
+                textureWidth: 1024,
+                textureHeight: 1024,
+                flowMap: flowMap,
+                normalMap0: normalMap,
+                normalMap1: normalMap,
+                reflectivity: params.reflectionStrength,
+                envMap: cubeRenderTarget.texture
+            });
+
+            water.position.y = 0.1;
+            water.rotation.x = -Math.PI / 2;
+            scene.add(water);
+
+            // GUI controls
+            const gui = new GUI();
+            gui.add(params, 'flowSpeed', 0.1, 3.0).name('Flow Speed').onChange(value => {
+                if (water.material.uniforms.flowSpeed) water.material.uniforms.flowSpeed.value = value;
+            });
+            gui.addColor(params, 'waterColor').name('Water Color').onChange(value => {
+                if (water.material.uniforms.color) water.material.uniforms.color.value.set(value);
+            });
+            gui.add(params, 'reflectionStrength', 0, 1.0).name('Reflection').onChange(value => {
+                if (water.material.uniforms.reflectivity) water.material.uniforms.reflectivity.value = value;
+            });
+
+            // Add orbit controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.minDistance = 10;
+            controls.maxDistance = 50;
+            controls.enableDamping = true;
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function addTexturedRocks() {
+            const textureLoader = new THREE.TextureLoader();
+            
+            // Load rock textures
+            const rockDiffuseTexture = textureLoader.load('textures/rock/Rock_Color.jpeg');
+            const rockNormalTexture = textureLoader.load('textures/rock/Rock_Normal.jpeg');
+            const rockRoughnessTexture = textureLoader.load('textures/rock/Rock_Roughness.jpeg');
+            const rockDisplacementTexture = textureLoader.load('textures/rock/Rock_Displacement.jpeg');
+            
+            // Create a material with these textures
+            const rockMaterial = new THREE.MeshStandardMaterial({
+                map: rockDiffuseTexture,
+                normalMap: rockNormalTexture,
+                roughnessMap: rockRoughnessTexture,
+                displacementMap: rockDisplacementTexture,
+                displacementScale: 0.1,
+                roughness: 0.8
+            });
+            
+            // Add rocks with the texture
+            for (let i = 0; i < 20; i++) {
+                let rockGeometry;
+                const rockType = Math.floor(Math.random() * 3);
+                const rockSize = Math.random() * 1.2 + 0.4;
+                
+                // Create different rock shapes
+                switch(rockType) {
+                    case 0:
+                        rockGeometry = new THREE.DodecahedronGeometry(rockSize, 1);
+                        break;
+                    case 1:
+                        rockGeometry = new THREE.OctahedronGeometry(rockSize, 1);
+                        break;
+                    case 2:
+                        rockGeometry = new THREE.TetrahedronGeometry(rockSize, 2);
+                        break;
+                }
+                
+                const rock = new THREE.Mesh(rockGeometry, rockMaterial.clone());
+                
+                // Position rocks near the riverbank
+                const side = Math.random() > 0.5 ? 1 : -1;
+                rock.position.set(
+                    side * (Math.random() * 3 + 5),  // X position
+                    rockSize / 2 - 0.1,              // Y position
+                    Math.random() * 28 - 14          // Z position
+                );
+                
+                rock.rotation.set(
+                    Math.random() * Math.PI,
+                    Math.random() * Math.PI,
+                    Math.random() * Math.PI
+                );
+                
+                // Give each rock its own UV mapping
+                rock.material.normalScale.set(Math.random() * 0.5 + 0.5, Math.random() * 0.5 + 0.5);
+                rock.material.displacementScale = Math.random() * 0.15 + 0.05;
+                
+                scene.add(rock);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Update water animations
+            if (water.material.uniforms.time) {
+                water.material.uniforms.time.value += 1.0/60.0 * params.flowSpeed;
+            }
+            
+            // Update reflections - hide water temporarily
+            water.visible = false;
+            cubeCamera.update(renderer, scene);
+            water.visible = true;
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
